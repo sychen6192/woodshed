@@ -2,3 +2,8 @@ venv/
 sep/
 __pycache__/
 *.wav
+
+# youtube-bass-tab skill outputs
+tabwork/
+*.mp3
+*.mid
