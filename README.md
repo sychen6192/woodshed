@@ -1,4 +1,4 @@
-# bass-tab
+# woodshed
 
 Agent skills for getting a bass line out of a recording. Two of them, meant to be used
 together: one produces the tab, the other tells you whether to believe it.
@@ -60,3 +60,8 @@ Automatic transcription tops out around 80% correct on a normal mix and drops wh
 bass shares space with the kick or a synth. Treat the output as a draft to correct by
 ear against the isolated stem — that is what the playbook skill is for. Personal
 practice use.
+
+Which is where the name comes from: to woodshed a tune is to shut yourself away with it
+until you have it. That is what comes out of here — a draft chart, the bass on its own,
+the track without it, and slowed copies of both to work against. Not an answer; the
+material to go and find one.
