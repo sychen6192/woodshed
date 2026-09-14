@@ -1,88 +1,62 @@
 # bass-tab
 
-Turning a song into a playable bass tab. The repo holds two implementations of
-that idea, which grew up separately and are now side by side:
+Agent skills for getting a bass line out of a recording. Two of them, meant to be used
+together: one produces the tab, the other tells you whether to believe it.
 
-|                | `*.py` at the root                  | `skills/youtube-bass-tab/`                     |
-| -------------- | ----------------------------------- | ---------------------------------------------- |
-| What it is     | research pipeline / library         | packaged agent skill (Hermes)                  |
-| Transcriber    | torchcrepe (monophonic f0)          | basic-pitch (polyphonic → MIDI)                |
-| Tempo          | `tempo.py` / `rhythm.py`            | librosa `beat_track`                           |
-| Output         | ASCII tab, typeset PNG              | ASCII tab, mp3 practice pack, cleaned MIDI     |
-| Entry point    | `python bass2tab.py <url\|file>`    | `bash scripts/basstab.sh "<url>"`              |
-| Environment    | whatever you have installed         | pinned venv built by `scripts/setup.sh`        |
+| Skill | What it does |
+| --- | --- |
+| [`skills/youtube-bass-tab`](skills/youtube-bass-tab) | YouTube link or audio file → ASCII tab, typeset PNG, isolated bass, bass-less backing track, slowed versions, cleaned MIDI. Runs locally: yt-dlp → demucs → basic-pitch or torchcrepe → tab renderer. |
+| [`skills/bass-transcription-playbook`](skills/bass-transcription-playbook) | How bass transcription is actually done, a six-step check for spotting which stage failed, and what the alternative tools and models are worth. No code, no dependencies. |
 
-Both follow the same shape — yt-dlp → demucs → transcribe → fret solver → tab —
-but they share no code. [`docs/integration.md`](docs/integration.md) works
-through what actually overlaps and what merging them would involve.
+Both install into Hermes or into Claude Code.
+
+```bash
+bash skills/youtube-bass-tab/install.sh                       # ~/.hermes/skills/music/...
+bash skills/youtube-bass-tab/install.sh --target claude        # ./.claude/skills/...
+bash skills/youtube-bass-tab/install.sh --target claude-user   # ~/.claude/skills/...
+```
+
+`bass-transcription-playbook` is plain Markdown — copy the directory to the same place,
+or point your agent at it where it sits.
 
 ## Layout
 
 ```
-bass2tab.py        CLI: source audio → isolated bass → notes → ASCII tab
-pitch.py           torchcrepe f0 tracking, with the octave-shift trick for bass
-fretboard.py       Viterbi fret solver + ASCII renderer
-tempo.py           spectral-flux onset envelope, autocorrelation tempo, beat phase
-rhythm.py          tempo from note onsets, downbeat search, grid quantization
-render_tab.py      typeset PNG tab (matplotlib)
-make_test.py       synthesizes test_bass.wav with a known 16-note ground truth
-
-cover.tab, tab_p*.png, cover_tab.pdf, ...   sample output kept for reference
-
-skills/youtube-bass-tab/   the agent skill — see its own README
-docs/integration.md        how the two halves relate
+skills/
+  youtube-bass-tab/            the pipeline; see its README for flags and troubleshooting
+    SKILL.md  install.sh  scripts/{basstab.sh,midi_to_basstab.py,...}  scripts/lib/
+  bass-transcription-playbook/ the craft; methodology, tool landscape, roadmap
+    SKILL.md  references/{methodology,tools,roadmap}.md
+examples/                      sample output kept for reference
+docs/integration.md            how this repo got to two skills, in Chinese
 ```
 
-Only `bass2tab.py → fretboard.py` is wired together today. `tempo.py`,
-`rhythm.py` and `render_tab.py` work but nothing calls them; they are reached by
-importing them yourself.
+Everything that used to sit loose at the repo root — the fret solver, the tempo and
+rhythm code, the PNG renderer, the torchcrepe pitch tracker — now lives in
+`skills/youtube-bass-tab/scripts/lib/` and is reachable from the pipeline. Nothing is
+orphaned any more.
 
-## Running the research pipeline
+## Checking it works
 
-Needs `ffmpeg`, `yt-dlp`, and a Python env with `torch`, `torchcrepe`,
-`soundfile`, `scipy`, `numpy`, `demucs` (plus `matplotlib` for `render_tab.py`).
+The pipeline ships two self-tests. The offline one needs only numpy, scipy, soundfile,
+matplotlib and pretty_midi, and covers everything downstream of the transcription
+engine — tempo, downbeat, quantization, the fret solver, both renderers, the register
+warnings — against synthesized audio with a known answer:
 
 ```bash
-python bass2tab.py "<youtube-url>" -o out.tab
-python bass2tab.py song.wav --tuning standard5 --bpm 96 -o out.tab
-python bass2tab.py bass_only.wav --skip-demucs --device cpu -o out.tab
+python skills/youtube-bass-tab/scripts/selftest_offline.py
 ```
 
-`--device` defaults to `cuda`; pass `--device cpu` if you have no GPU. Writes
-`out.tab` and `out.tab.notes.json` (the raw note events).
-
-Tunings: `standard4` (EADG), `drop_d4` (DADG), `standard5` (BEADG).
-
-Sanity check without any audio, since `fretboard.py` is pure stdlib:
+The full one additionally exercises demucs and basic-pitch, so it needs the venv that
+`scripts/setup.sh` builds:
 
 ```bash
-python fretboard.py        # chromatic run + an octave leap
-python make_test.py        # writes test_bass.wav + test_truth.txt
+~/.venvs/basstab/bin/python skills/youtube-bass-tab/scripts/selftest.py
 ```
-
-## Running the skill
-
-Self-contained: it builds its own Python 3.11 venv at `~/.venvs/basstab` and
-installs itself into `~/.hermes/skills/music/youtube-bass-tab`.
-
-```bash
-bash skills/youtube-bass-tab/install.sh
-```
-
-Then, from the repo or anywhere:
-
-```bash
-bash ~/.hermes/skills/music/youtube-bass-tab/scripts/basstab.sh "<url>" --slug song
-```
-
-Outputs land in `~/tabwork/<slug>/out/`. Download and stem separation are cached
-per slug, so re-running with different knobs (`--onset`, `--bpm`, `--tuning`,
-`--transpose`, `--grid`) only costs the transcription step. Full usage,
-troubleshooting and the fix-it-by-ear loop are in
-[`skills/youtube-bass-tab/README.md`](skills/youtube-bass-tab/README.md).
 
 ## Expectations
 
-Automatic transcription tops out around 80% correct on a normal mix, and drops
-where the bass shares space with the kick or a synth. Treat the output as a
-draft to correct by ear against the isolated bass stem. Personal practice use.
+Automatic transcription tops out around 80% correct on a normal mix and drops where the
+bass shares space with the kick or a synth. Treat the output as a draft to correct by
+ear against the isolated stem — that is what the playbook skill is for. Personal
+practice use.

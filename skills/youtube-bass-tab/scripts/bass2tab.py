@@ -2,10 +2,13 @@
 """bass2tab: audio (file or YouTube URL) -> isolated bass -> MIDI -> ASCII tab."""
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
 from fretboard import solve, render, TUNINGS
 

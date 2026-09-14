@@ -15,9 +15,11 @@ usage() {
 usage: basstab.sh <youtube-url> | --input FILE  [options]
   --slug NAME          working-dir name (default: ascii title, else video id)
   --tuning EADG        EADG | BEADG | DADG | EbAbDbGb | 28,33,38,43
-  --bpm N              force tempo (default: librosa on the mix)
+  --bpm N              force tempo (default: onset-envelope estimate on the mix)
+  --engine NAME        basic-pitch (default, polyphonic) | crepe (monophonic f0)
   --onset 0.5          basic-pitch onset threshold (0.4 splits repeats, 0.7 kills ghosts)
   --min-note-ms 60     basic-pitch minimum note length
+  --conf 0.55          crepe periodicity threshold; raise if the stem is noisy
   --grid 16            tab grid: 16 straight, 12/24 swing
   --transpose N        semitones before fret mapping (-12 for octave-high synth bass)
   --no-separate        source is already bass-only (bass cover / isolated track)
@@ -28,6 +30,7 @@ EOF
 
 URL=""; INPUT=""; SLUG=""; TUNING="EADG"; BPM=""; ONSET="0.5"; MINNOTE="60"
 GRID="16"; TRANSPOSE="0"; SEPARATE=1; DEVICE=(); FORCE=0
+ENGINE="basic-pitch"; CONF="0.55"; CREPE_DEV="cuda"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --input) INPUT="$2"; shift 2;;
@@ -36,10 +39,12 @@ while [[ $# -gt 0 ]]; do
     --bpm) BPM="$2"; shift 2;;
     --onset) ONSET="$2"; shift 2;;
     --min-note-ms) MINNOTE="$2"; shift 2;;
+    --engine) ENGINE="$2"; shift 2;;
+    --conf) CONF="$2"; shift 2;;
     --grid) GRID="$2"; shift 2;;
     --transpose) TRANSPOSE="$2"; shift 2;;
     --no-separate) SEPARATE=0; shift;;
-    --cpu) DEVICE=(-d cpu); shift;;
+    --cpu) DEVICE=(-d cpu); CREPE_DEV="cpu"; shift;;
     --force) FORCE=1; shift;;
     -h|--help) usage; exit 0;;
     -*) echo "unknown option $1"; usage; exit 2;;
@@ -50,6 +55,8 @@ done
 fail() { echo "RESULT {\"ok\":false,\"error\":\"$1\",\"log\":\"${LOG:-}\"}"; exit 1; }
 step() { echo "[basstab] $*"; }
 [[ -n "$URL" || -n "$INPUT" ]] || { usage; fail "no input given"; }
+[[ "$ENGINE" == "basic-pitch" || "$ENGINE" == "crepe" ]] \
+  || { usage; fail "unknown --engine $ENGINE (basic-pitch | crepe)"; }
 [[ -x "$BASSENV/bin/python" ]] || fail "venv not found at $BASSENV"
 command -v ffmpeg >/dev/null || fail "ffmpeg not installed"
 
@@ -99,13 +106,21 @@ else
 fi
 
 # ---- 3. transcribe -----------------------------------------------------------
-step "transcribing (basic-pitch onset=$ONSET min-note=${MINNOTE}ms)"
 rm -rf "$W/bp"; mkdir -p "$W/bp"
-"$BASSENV/bin/basic-pitch" "$W/bp" "$BASS" --save-midi \
-  --onset-threshold "$ONSET" --minimum-note-length "$MINNOTE" \
-  --minimum-frequency 30 --maximum-frequency 400 >>"$LOG" 2>&1 || fail "basic-pitch failed (see run.log)"
-MID="$(ls "$W"/bp/*.mid 2>/dev/null | head -1)"
-[[ -n "$MID" ]] || fail "basic-pitch produced no MIDI"
+if [[ "$ENGINE" == "crepe" ]]; then
+  step "transcribing (torchcrepe conf=$CONF device=$CREPE_DEV)"
+  MID="$W/bp/crepe.mid"
+  "$BASSENV/bin/python" "$SCRIPT_DIR/lib/crepe_to_midi.py" "$BASS" "$MID" \
+    --conf "$CONF" --device "$CREPE_DEV" >>"$LOG" 2>&1 \
+    || fail "torchcrepe transcription failed (see run.log; if CUDA/OOM, retry with --cpu)"
+else
+  step "transcribing (basic-pitch onset=$ONSET min-note=${MINNOTE}ms)"
+  "$BASSENV/bin/basic-pitch" "$W/bp" "$BASS" --save-midi \
+    --onset-threshold "$ONSET" --minimum-note-length "$MINNOTE" \
+    --minimum-frequency 30 --maximum-frequency 400 >>"$LOG" 2>&1 || fail "basic-pitch failed (see run.log)"
+  MID="$(ls "$W"/bp/*.mid 2>/dev/null | head -1)"
+fi
+[[ -n "${MID:-}" && -f "$MID" ]] || fail "$ENGINE produced no MIDI"
 
 # ---- 4. tab ------------------------------------------------------------------
 step "rendering tab (tuning=$TUNING grid=$GRID)"
@@ -113,7 +128,7 @@ if [[ -n "$BPM" ]]; then BPMARG=(--bpm "$BPM"); else BPMARG=(--audio "$W/song.wa
 TAB="$OUT/$SLUG.tab.txt"
 SUMMARY="$("$BASSENV/bin/python" "$TAB_PY" "$MID" "${BPMARG[@]}" --tuning "$TUNING" \
   --grid "$GRID" --transpose "$TRANSPOSE" --title "$SLUG" \
-  -o "$TAB" --midi-out "$OUT/$SLUG.cleaned.mid" 2>&1 >/dev/null)" \
+  -o "$TAB" --png "$OUT/$SLUG.tab.png" --midi-out "$OUT/$SLUG.cleaned.mid" 2>&1 >/dev/null)" \
   || fail "tab render failed: $(printf '%s' "$SUMMARY" | tr '\n"' '  ')"
 echo "$SUMMARY" >> "$LOG"
 

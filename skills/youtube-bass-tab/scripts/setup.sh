@@ -41,9 +41,13 @@ fi
 
 # 5. transcription stack
 #    setuptools<81 is required: newer versions dropped pkg_resources, which resampy imports.
-say "installing demucs, basic-pitch, yt-dlp, librosa"
+#    torchcrepe drives the second engine (--engine crepe); matplotlib draws the PNG tab.
+#    Tempo is our own onset-envelope code now, so nothing here calls librosa directly
+#    (basic-pitch still pulls it in as a dependency of its own).
+say "installing demucs, basic-pitch, torchcrepe, yt-dlp"
 if [[ "$OS" == "Darwin" ]]; then BP="basic-pitch[coreml]"; else BP="basic-pitch"; fi
-uv pip install -q demucs "$BP" pretty_midi soundfile librosa yt-dlp "setuptools<81"
+uv pip install -q demucs "$BP" torchcrepe pretty_midi soundfile numpy scipy matplotlib \
+  yt-dlp "setuptools<81"
 
 # 6. self-test (no download, no GPU needed)
 say "running self-test"

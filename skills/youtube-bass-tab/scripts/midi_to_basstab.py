@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """midi_to_basstab.py - basic-pitch MIDI -> playable ASCII bass tab."""
-import argparse, math, sys
-import pretty_midi
+import argparse, math, os, sys
 
-TUNINGS = {"EADG": [28, 33, 38, 43], "BEADG": [23, 28, 33, 38, 43],
-           "DADG": [26, 33, 38, 43], "EbAbDbGb": [27, 32, 37, 42]}
-NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+
+import pretty_midi
+from fretboard import TUNINGS, PITCH_CLASSES as NAMES, resolve, string_name
+
 HARMONIC_INTERVALS = {12, 19, 24, 28, 31}
 
 def pname(p):
@@ -39,21 +40,7 @@ def suppress_harmonics(notes):
                 drop.add(j)
     return [n for i, n in enumerate(notes) if i not in drop], len(drop)
 
-def detect_bpm(args, notes):
-    if args.bpm:
-        return float(args.bpm), "user"
-    if args.audio:
-        try:
-            import librosa
-            y, sr = librosa.load(args.audio, mono=True, duration=120)
-            t, _ = librosa.beat.beat_track(y=y, sr=sr)
-            t = float(t if not hasattr(t, "__len__") else t[0])
-            if t > 0:
-                while t < 65: t *= 2
-                while t > 190: t /= 2
-                return t, "librosa"
-        except Exception as e:
-            print(f"[warn] librosa BPM failed ({e}); falling back to IOI estimate", file=sys.stderr)
+def _bpm_from_iois(notes):
     iois = [b.start - a.start for a, b in zip(notes, notes[1:]) if 0.06 < b.start - a.start < 2]
     if not iois:
         return 120.0, "default"
@@ -62,6 +49,77 @@ def detect_bpm(args, notes):
     while bpm < 65: bpm *= 2
     while bpm > 190: bpm /= 2
     return bpm, "ioi-estimate"
+
+
+def detect_tempo(args, notes):
+    """Return (bpm, source, offset, beat_lock).
+
+    `offset` is the time of the bar line bar 1 starts on. Tempo comes from the
+    waveform when audio is available (tempo.py: spectral-flux onset envelope +
+    autocorrelation); the bar phase comes from the notes instead, because a
+    grid fitted to the waveform locks to the beat and not to the bar. The
+    result is walked back whole bars to sit at or before the first note, so a
+    pickup is not quantized to a negative slot and dropped.
+    """
+    onsets = [n.start for n in notes]
+    bpm = float(args.bpm) if args.bpm else None
+    source = "user" if bpm else None
+    lock = None
+
+    if args.audio:
+        try:
+            from tempo import analyse_audio
+            got = analyse_audio(args.audio, bpm=bpm)
+            lock = got["beat_lock"]
+            if bpm is None:
+                bpm, source = got["bpm"], "onset-envelope"
+        except Exception as e:
+            print(f"[warn] audio tempo analysis failed ({e}); using note onsets",
+                  file=sys.stderr)
+
+    if bpm is None:
+        bpm, source = _bpm_from_iois(notes)
+
+    if args.offset is not None:
+        return bpm, source, float(args.offset), lock
+    if not onsets:
+        return bpm, source, 0.0, lock
+
+    try:
+        from rhythm import downbeat_from_notes
+        down, _ = downbeat_from_notes(
+            [(n.start, n.end, n.pitch, n.velocity) for n in notes],
+            bpm, args.meter, max(1, args.grid // 4))
+    except Exception as e:
+        print(f"[warn] downbeat search failed ({e}); bar 1 starts at t=0",
+              file=sys.stderr)
+        return bpm, source, 0.0, lock
+
+    # step whole bars back so the first note is not quantized to a negative slot
+    bar = 60.0 / bpm * args.meter
+    down += bar * math.floor((min(onsets) - down) / bar)
+    return bpm, source, down, lock
+
+
+def register_report(raw, tuning, frets):
+    """Where the line sits relative to what the tuning can actually reach."""
+    lo, hi = min(tuning), max(tuning) + frets
+    return {"below": sum(1 for p in raw if p < lo),
+            "above": sum(1 for p in raw if p > hi),
+            "median": sorted(raw)[len(raw) // 2]}
+
+
+def tuning_hint(raw, tuning):
+    """Suggest a lower tuning when notes keep falling under the lowest string."""
+    lo = min(tuning)
+    below = [p for p in raw if p < lo]
+    if len(below) < max(3, 0.03 * len(raw)):
+        return None
+    deepest = min(below)
+    for name in ("EbAbDbGb", "DADG", "BEADG"):    # least exotic that reaches it
+        if min(TUNINGS[name]) <= deepest and min(TUNINGS[name]) < lo:
+            return name, len(below), deepest
+    return None
 
 def quantize(notes, bpm, grid, offset):
     slot = 60.0 / bpm / (grid / 4)
@@ -112,7 +170,7 @@ def map_frets(events, tuning, frets):
 
 def render(events, tuning, grid, meter, bars_per_line, bpm, title):
     slots_bar = grid * meter // 4
-    labels = [NAMES[t % 12] for t in tuning]
+    labels = [string_name(t) for t in tuning]
     w = max(len(x) for x in labels)
     total_bars = (max(e[0] for e in events) // slots_bar) + 1 if events else 0
     grid_map = {e[0]: e for e in events}
@@ -148,30 +206,64 @@ def main():
     ap.add_argument("--bpm", type=float); ap.add_argument("--audio")
     ap.add_argument("--tuning", default="EADG"); ap.add_argument("--frets", type=int, default=20)
     ap.add_argument("--grid", type=int, default=16); ap.add_argument("--meter", type=int, default=4)
-    ap.add_argument("--bars-per-line", type=int, default=4); ap.add_argument("--offset", type=float, default=0.0)
+    ap.add_argument("--bars-per-line", type=int, default=4)
+    ap.add_argument("--offset", type=float, default=None,
+                    help="bar-1 time in seconds; default: detect the downbeat")
+    ap.add_argument("--png", help="also write a typeset tab image here")
     ap.add_argument("--transpose", type=int, default=0); ap.add_argument("--vel-floor", type=float, default=0.35)
     ap.add_argument("--no-harmonic-filter", action="store_true"); ap.add_argument("--midi-out")
     ap.add_argument("--title", default="bass tab")
     a = ap.parse_args()
-    tuning = TUNINGS.get(a.tuning) or [int(x) for x in a.tuning.split(",")]
+    tuning = resolve(a.tuning)
     notes, n_vel = load_notes(a.midi, a.vel_floor)
     for n in notes: n.pitch += a.transpose
     n_harm = 0
     if not a.no_harmonic_filter: notes, n_harm = suppress_harmonics(notes)
-    bpm, src = detect_bpm(a, notes)
-    events, slot_dur = quantize(notes, bpm, a.grid, a.offset)
+    bpm, src, offset, lock = detect_tempo(a, notes)
+    events, slot_dur = quantize(notes, bpm, a.grid, offset)
+    if not events:
+        sys.exit("every note quantized away - check --bpm and --offset")
+    raw = [e[1] for e in events]                 # pitches before octave folding
+    reg = register_report(raw, tuning, a.frets)
+    hint = tuning_hint(raw, tuning)
     folds = fold_to_range(events, tuning, a.frets)
     map_frets(events, tuning, a.frets)
     tab = render(events, tuning, a.grid, a.meter, a.bars_per_line, bpm, a.title)
     if a.out: open(a.out, "w").write(tab + "\n")
     else: print(tab)
     if a.midi_out: write_midi(events, slot_dur, a.midi_out)
-    print(f"[summary] notes={len(events)} bpm={bpm:.1f}({src}) dropped: vel_floor={n_vel} "
-          f"harmonics={n_harm} | octave_folds={folds} | range "
+    if a.png:
+        from render_tab import render_png
+        div = max(1, a.grid // 4)
+        render_png([(e[0], e[4]) for e in events], a.png,
+                   title=a.title,
+                   subtitle=f"BPM {bpm:.1f} ({src})  |  {a.meter}/4  |  grid 1/{a.grid}",
+                   tuning=tuning, div=div, bpb=a.meter,
+                   bars_per_line=a.bars_per_line)
+
+    lockbit = f" lock={lock:.2f}" if lock is not None else ""
+    print(f"[summary] notes={len(events)} bpm={bpm:.1f}({src}) bar1={offset:.2f}s{lockbit} "
+          f"dropped: vel_floor={n_vel} harmonics={n_harm} | octave_folds={folds} | range "
           f"{pname(min(e[1] for e in events))}-{pname(max(e[1] for e in events))}"
-          + (f" | tab -> {a.out}" if a.out else ""), file=sys.stderr)
-    if folds > len(events) * 0.15:
-        print("[warn] many octave folds - synth bass / octave errors likely; try --transpose -12", file=sys.stderr)
+          + (f" | tab -> {a.out}" if a.out else "")
+          + (f" | png -> {a.png}" if a.png else ""), file=sys.stderr)
+    # Octave errors are the standard failure on bass, but "folded" on its own does
+    # not say which way: below the low string usually means the wrong tuning,
+    # above the top fret or a high centre of mass means a synth-bass octave error.
+    if hint:
+        name, n, deepest = hint
+        print(f"[warn] {n} notes fall below the lowest open string ({pname(deepest)}) - "
+              f"the song may be in {name}; try --tuning {name}", file=sys.stderr)
+    if reg["above"] > len(raw) * 0.05:
+        print(f"[warn] {reg['above']} notes sit past fret {a.frets} and were folded down - "
+              f"try --frets 24, or --transpose -12 if the line is an octave high",
+              file=sys.stderr)
+    if reg["median"] > min(tuning) + 24:
+        print(f"[warn] the line centres on {pname(reg['median'])}, high for a bass - "
+              "synth-bass octave error likely; try --transpose -12", file=sys.stderr)
+    if folds > len(events) * 0.15 and not hint and not reg["above"]:
+        print(f"[warn] {folds} notes were octave-folded to fit the fretboard - "
+              "check the tuning and the register", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

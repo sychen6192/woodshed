@@ -50,6 +50,9 @@ def main():
         sys.exit(f"[selftest] FAILED: {res.get('error')} (log: {res.get('log')})")
     notes = int(re.search(r"notes=(\d+)", res["summary"]).group(1))
     print(open(res["tab"]).read())
+    png = os.path.join(res["out_dir"], "selftest.tab.png")
+    if not (os.path.exists(png) and os.path.getsize(png) > 10000):
+        sys.exit(f"[selftest] FAILED: no typeset tab at {png}")
     if not 12 <= notes <= 20:
         sys.exit(f"[selftest] FAILED: expected ~16 notes, got {notes}")
     print(f"[selftest] PASS - {notes} notes detected (ground truth 16); "

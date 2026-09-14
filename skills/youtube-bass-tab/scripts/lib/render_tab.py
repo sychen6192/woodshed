@@ -5,9 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
 
-from fretboard import solve, TUNINGS
-
-STR_NAMES = {28: "E", 33: "A", 38: "D", 43: "G", 26: "D", 23: "B"}
+from fretboard import solve, resolve, string_name
 
 BG = "#faf8f4"
 INK = "#1c1c1c"
@@ -46,7 +44,10 @@ def build_grid(events, bpm, phase, div=4, bpb=4, tuning="standard4",
 
 def render_png(placed, out, title="", subtitle="", tuning="standard4",
                div=4, bpb=4, bars_per_line=4, dpi=150):
-    tun = TUNINGS[tuning]
+    """placed: [(grid_slot, (string_index, fret))]. tuning: name or MIDI list."""
+    if not placed:
+        raise ValueError("nothing to render: no placed notes")
+    tun = resolve(tuning)
     n_str = len(tun)
     spb = div * bpb                      # slots per bar
     spl = spb * bars_per_line            # slots per line
@@ -88,7 +89,7 @@ def render_png(placed, out, title="", subtitle="", tuning="standard4",
         # string lines
         for i, y in enumerate(ys):
             ax.plot([x0, x1], [y, y], color=LINE, lw=0.9, zorder=2)
-            ax.text(x0 - 0.016, y, STR_NAMES.get(tun[n_str - 1 - i], "?"),
+            ax.text(x0 - 0.016, y, string_name(tun[n_str - 1 - i]),
                     ha="right", va="center", fontsize=10.5,
                     color=BAR, family="DejaVu Sans", weight="bold", zorder=3)
 

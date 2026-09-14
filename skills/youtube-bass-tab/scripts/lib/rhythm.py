@@ -74,3 +74,41 @@ def analyse(events, div=4, beats_per_bar=4):
     q = quantize(events, bpm, db, div, beats_per_bar)
     return {"bpm": bpm, "confidence": conf, "downbeat": db,
             "div": div, "beats_per_bar": beats_per_bar, "notes": q}
+
+
+
+def downbeat_from_notes(notes, bpm, beats_per_bar=4, subdiv=4):
+    """Find the bar phase that best explains where the line puts its weight.
+
+    A beat grid fitted to a waveform locks to the beat but not to the bar, and
+    on a steady stream of eighths it will happily lock to an offbeat. Note data
+    breaks the tie: a bass line lands the root on beat 1, holds it longer and
+    hits it harder. Score every candidate phase by that weighted onset mass.
+
+    notes: [(start, end, pitch, velocity)]. Returns (phase_seconds, score).
+    """
+    if not notes:
+        return 0.0, 0.0
+    starts = np.array([n[0] for n in notes], dtype=float)
+    durs = np.array([n[1] - n[0] for n in notes], dtype=float)
+    pitches = np.array([n[2] for n in notes], dtype=float)
+    vels = np.array([n[3] for n in notes], dtype=float)
+
+    beat = 60.0 / bpm
+    bar = beat * beats_per_bar
+    sigma = beat / subdiv / 2                     # half a subdivision
+
+    accent = vels / max(vels.max(), 1.0)
+    held = np.minimum(durs / beat, 1.0)
+    span = pitches.max() - pitches.min()
+    low = (pitches.max() - pitches) / span if span > 0 else np.ones_like(pitches)
+    weight = accent * (1.0 + held) * (1.0 + low)
+
+    best, best_score = 0.0, -1.0
+    for phase in np.linspace(0, bar, beats_per_bar * subdiv * 4, endpoint=False):
+        off = (starts - phase) % bar
+        dist = np.minimum(off, bar - off)
+        score = float(np.sum(weight * np.exp(-(dist ** 2) / (2 * sigma ** 2))))
+        if score > best_score:
+            best_score, best = score, float(phase)
+    return best, best_score
