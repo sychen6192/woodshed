@@ -1,4 +1,4 @@
-# bass-tab
+# woodshed
 
 Agent skills for getting a bass line out of a recording. Two of them, meant to be used
 together: one produces the tab, the other tells you whether to believe it.
