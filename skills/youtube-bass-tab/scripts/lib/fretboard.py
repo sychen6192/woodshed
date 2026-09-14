@@ -4,7 +4,31 @@ TUNINGS = {
     "standard4": [28, 33, 38, 43],       # E1 A1 D2 G2
     "drop_d4":   [26, 33, 38, 43],
     "standard5": [23, 28, 33, 38, 43],   # B0 added
+    "eb4":       [27, 32, 37, 42],       # half step down
 }
+
+# The pipeline names the same tunings by their open strings; keep one table so
+# both spellings resolve to the same thing.
+ALIASES = {"EADG": "standard4", "DADG": "drop_d4",
+           "BEADG": "standard5", "EbAbDbGb": "eb4"}
+TUNINGS.update({alias: TUNINGS[canon] for alias, canon in ALIASES.items()})
+
+# Flats throughout: down-tuned basses are spelled Eb/Ab/Db/Gb, never D#/G#/C#/F#.
+PITCH_CLASSES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+
+
+def string_name(midi):
+    """Open-string label for a MIDI note, for any tuning."""
+    return PITCH_CLASSES[midi % 12]
+
+
+def resolve(tuning):
+    """Accept a tuning name, a '28,33,38,43' string, or a list of MIDI notes."""
+    if not isinstance(tuning, str):
+        return list(tuning)
+    if tuning in TUNINGS:
+        return TUNINGS[tuning]
+    return [int(x) for x in tuning.split(",")]
 
 MAX_FRET = 24
 OPEN_STRING_BONUS = 1.5   # open strings are cheap to play
@@ -59,7 +83,7 @@ def fold_into_range(notes, tuning):
 
 def solve(notes, tuning_name="standard4"):
     """Viterbi over fretboard positions. Returns list of (string, fret)."""
-    tuning = TUNINGS[tuning_name]
+    tuning = resolve(tuning_name)
     if not notes:
         return []
     notes = fold_into_range(notes, tuning)
@@ -90,9 +114,9 @@ def solve(notes, tuning_name="standard4"):
 
 def render(positions, tuning_name="standard4", per_line=48, labels=None):
     """ASCII tab. labels: optional per-note strings (e.g. rhythm marks)."""
-    tuning = TUNINGS[tuning_name]
-    names = {28: "E", 33: "A", 38: "D", 43: "G", 26: "D", 23: "B"}
+    tuning = resolve(tuning_name)
     n_str = len(tuning)
+    gutter = max(len(string_name(t)) for t in tuning)
 
     cols = []
     for i, (s, f) in enumerate(positions):
@@ -107,10 +131,10 @@ def render(positions, tuning_name="standard4", per_line=48, labels=None):
     for start in range(0, len(cols), per_line):
         chunk = cols[start:start + per_line]
         if labels:
-            out.append("   " + "".join(c[1] for c in chunk))
+            out.append(" " * (gutter + 1) + "".join(c[1] for c in chunk))
         # high string printed on top
         for si in reversed(range(n_str)):
-            name = names.get(tuning[si], "?")
+            name = string_name(tuning[si]).rjust(gutter)
             out.append(f"{name}|" + "".join(c[0][si] for c in chunk) + "|")
         out.append("")
     return "\n".join(out)

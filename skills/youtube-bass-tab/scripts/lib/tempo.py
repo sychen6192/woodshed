@@ -10,6 +10,7 @@ import soundfile as sf
 SR = 22050
 HOP = 256                      # ~11.6 ms
 NFFT = 1024
+FRAME_LAG = NFFT / 2 / SR      # a frame's flux belongs to its centre, not its start
 
 
 def _load(path):
@@ -40,7 +41,10 @@ def onset_envelope(path):
     flux = np.maximum(flux, 0)
     if flux.max() > 0:
         flux /= flux.max()
-    times = np.arange(len(flux)) * HOP / SR
+    # A frame starting at i*HOP spans NFFT samples, so its flux reports an onset
+    # that happened anywhere in that window. Attributing it to the frame start
+    # makes every onset read ~NFFT/2 early, which drags the beat phase with it.
+    times = np.arange(len(flux)) * HOP / SR + FRAME_LAG
     return times, flux
 
 
@@ -76,7 +80,7 @@ def track_beats(times, flux, bpm, tol=0.12):
     plen = period * fps
     best_phase, best_score = 0.0, -1.0
     for ph in np.linspace(0, period, 96, endpoint=False):
-        pos = np.arange(ph, times[-1], period) * fps
+        pos = (np.arange(ph, times[-1], period) - FRAME_LAG) * fps
         pos = pos[(pos >= 0) & (pos < len(flux))].astype(int)
         if len(pos) == 0:
             continue
@@ -90,9 +94,17 @@ def track_beats(times, flux, bpm, tol=0.12):
     return beats, best_phase, best_score
 
 
-def analyse_audio(path, lo=60.0, hi=180.0):
+def analyse_audio(path, lo=60.0, hi=180.0, bpm=None):
+    """Estimate tempo and lock a beat grid to the audio.
+
+    Pass `bpm` to skip estimation and phase-lock at a tempo you already know;
+    the phase is only meaningful for the tempo it was fitted at.
+    """
     t, flux = onset_envelope(path)
-    bpm, score, _ = tempo_from_envelope(flux, lo, hi)
+    if bpm is None:
+        bpm, score, _ = tempo_from_envelope(flux, lo, hi)
+    else:
+        bpm, score = float(bpm), float("nan")
     beats, phase, lock = track_beats(t, flux, bpm)
     return {"bpm": bpm, "ac_score": score, "phase": phase,
             "beat_lock": lock, "beats": beats, "times": t, "flux": flux}
