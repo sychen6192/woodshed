@@ -68,21 +68,27 @@ The renderer's `[warn]` lines already name the likely cause. Act on them first:
 | `the line centres on ..., high for a bass` | `--transpose -12` |
 | `notes sit past fret N and were folded down` | `--frets 24`, or `--transpose -12` |
 | repeated notes got merged into one | `--onset 0.4` |
-| ghost notes / noise in the tab | `--onset 0.7` |
+| ghost notes / a note repeated right after itself | `--onset 0.7`, then compare note counts: it also merges repeated notes on the low strings. If more real notes vanish than ghosts, use `--engine crepe` instead |
 | tempo wrong / doubled / halved | `--bpm N` |
 | bar lines land in the wrong place | `--bpm N` first; the downbeat is derived from it |
 | swing or triplet feel looks smeared | `--grid 12` |
-| line is clean but sparse, or a busy mix confuses it | `--engine crepe` |
+| the tab is full of doubled / re-triggered notes | `--engine crepe` |
+| RESULT error says a host is unreachable or the network is blocked | no flag fixes this: yt-dlp or the demucs weight download could not get out; tell the user which host |
 
-`--engine crepe` swaps basic-pitch for torchcrepe: monophonic, so it will not invent a
-second voice, and it handles the bottom two strings better; it has no real velocities,
-so the ghost-note filter is weaker. Try it when basic-pitch drops notes on a dense mix.
+`--engine crepe` swaps basic-pitch for torchcrepe. Measured on a line with 96 known
+notes: basic-pitch found 97% of them and added 16 ghost re-triggers; crepe found 89%,
+invented nothing and got every pitch it reported right, but merges repeated notes,
+because a pitch tracker only splits on a pitch change. Its velocities come from the
+loudness of the audio at each onset, so accents and the downbeat still work. Use crepe
+when the tab is full of doubled notes; stay on basic-pitch when the line leans on
+repeats.
 
 ## 4. Failures
 
 | Symptom | Action |
 |---|---|
 | RESULT error `venv not found` | tell the user to run `bash $SKILL_DIR/scripts/setup.sh` |
+| setup.sh fails fetching from download.pytorch.org | the network blocks that host; re-run as `TORCH_INDEX_URL= bash $SKILL_DIR/scripts/setup.sh` (plain PyPI, ~7 GB on Linux) |
 | RESULT error mentions ffmpeg | `sudo apt install ffmpeg` (or `brew install ffmpeg`) |
 | RESULT error mentions yt-dlp | link is bad, private or age-gated; ask for another link or a file upload |
 | RESULT error mentions demucs / CUDA / out of memory | re-run with `--cpu` |

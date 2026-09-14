@@ -62,14 +62,47 @@ register warnings drop D / 降半音 / 五弦 / 高八度 synth bass，各自剛
 crepe engine glue crepe 形狀的 events 進出譜器，結果跟 basic-pitch 那條一致
 ```
 
-## 還沒驗證的
+## 從安裝到產出，實際跑過一次
 
-- **`--engine crepe` 沒有真的跑過。** 接縫測了，但 `pitch.py` 要 torch ＋ torchcrepe，
-  這次的環境沒有。第一次真跑要拿同一首歌比兩個引擎。
-- **`selftest.py`（完整版）改完之後沒重跑**，它要 demucs 跟 basic-pitch。它斷言的是
-  summary 裡的 `notes=N`，那個欄位沒動，所以理論上會過——但這是推論不是測試。
-- **tempo / downbeat 只在合成音訊上驗過**，格線是死的。真鼓、rubato、swing 都還沒試。
+環境：一台沒有 GPU 的 Linux 容器，網路經過代理，`download.pytorch.org`、
+`dl.fbaipublicfiles.com`、YouTube 都被擋，PyPI 通。
 
-接下來要做什麼寫在
-[`skills/bass-transcription-playbook/references/roadmap.md`](../skills/bass-transcription-playbook/references/roadmap.md)，
-第一順位是 Guitar Pro 匯出——ASCII 改起來太痛苦，而 MIDI 會丟掉剛算完的指板選擇。
+**安裝。** 原版 `install.sh` 在 torch 那步直接死，吐的是 uv 的原始錯誤、沒有指引。加了
+`TORCH_INDEX_URL` 退路（設成空字串就改走 PyPI），`TORCH_INDEX_URL= bash install.sh`
+之後整條裝完：torch 2.14（cu130，CPU 模式）、demucs、basic-pitch、torchcrepe。venv 7.5 GB
+——PyPI 上 Linux 的 torch 是 CUDA 版，這是代價。最後乾淨重跑一次 `install.sh`：exit 0，
+`[selftest] PASS`，12 秒（venv 沒重建，safe to re-run 成立）。
+
+**產出。** 合成一首 32 秒的歌（bass ＋ 大鼓 ＋ hi-hat ＋ pad，I–vi–IV–V，96 BPM，
+downbeat 故意放在 1.10 秒，onset 加 ±8 ms 抖動），96 個已知音。丟給裝好的 skill：
+
+| | 找到 | 音高全對 | 八度錯 | 幽靈音 | BPM | bar 1 | 時間 |
+|---|---|---|---|---|---|---|---|
+| basic-pitch（預設） | 93/96 | 92 | 0 | 16 | 96.1 | 1.09s | 14 秒 |
+| basic-pitch `--onset 0.7` | 82/96 | 80 | 1 | 7 | 96.1 | 0.82s（錯） | 14 秒 |
+| crepe | 85/96 | 85 | 0 | 0 | 96.1 | 1.09s | 1 分 44 秒 |
+
+六個輸出檔（tab.txt、tab.png、bass.mp3、bass_slow75.mp3、song_slow75.mp3、cleaned.mid）
+都有，`RESULT` 一行 JSON 照合約。
+
+**跑出來才看到的問題，都修了：**
+
+- crepe 的 bar 1 一開始是 0.78s，差半拍。音符時間其實對到 10 ms 內，是 downbeat 選錯相位：
+  這條 line 根音同時落在第 1 拍跟第 1 拍後半，兩個相位打平要靠重音分勝負，而 crepe 的
+  periodicity 不含音量，velocity 全平（114–117）。改成從音檔算每個 onset 的 RMS 當
+  velocity，bar 1 就回到 1.09s。
+- 8 ms 的抖動讓第 1 小節整個空掉：downbeat 找對了，但第一個音比小節線早 8 ms，walk-back
+  就退了一整個小節。加半格容差。
+- demucs 權重下載被擋，錯誤訊息說「retry with --cpu」；yt-dlp 被擋，說「連結壞了」。
+  現在會看 run.log 裡有沒有代理／DNS 的特徵，直接講是哪台主機出不去。兩個都實際重現過。
+- `--onset 0.7`——playbook 原本對幽靈音的處方——在這份素材上是淨虧損：幽靈音 16→7，
+  但真音 3→14 也跟著掉（低音弦上重複的根音被合併），downbeat 還跟著歪。處方改成
+  「先比音數，掉得比幽靈音多就改用 crepe」，數字寫進 playbook。
+
+**還是沒驗到的：** demucs 分軌本身（權重抓不到，只驗到失敗路徑）、YouTube 下載（同理）、
+真鼓／rubato／swing（兩組測試都是死格線）。這幾項寫在 roadmap 的 Still unverified。
+重現用 `scripts/bench/make_mix.py` ＋ `scripts/bench/score.py`。
+
+過程中一個教訓：背景的 bash 正在執行 `setup.sh` 時，我改了那個檔案一行註解，bash 讀到
+一半檔案位移，噴 syntax error、exit 2。self-test 其實已經 PASS，但那次安裝的 exit code
+不能算，所以才有最後那次乾淨重跑。

@@ -47,8 +47,14 @@ that, and re-check — later checks are meaningless on a tab that failed an earl
 | 2 | **Tuning** | Any note that would need a fret below 0 on the low string? | The song is down-tuned or on a 5-string. Re-run with `--tuning DADG` / `EbAbDbGb` / `BEADG`. |
 | 3 | **Root on the downbeat** | Does the note on beat 1 of each bar match the chord being played? | Either the chord is being outlined from a passing tone (fine) or bar 1 is in the wrong place — go to check 4. |
 | 4 | **Bar alignment** | Do the bar lines land on the kick/snare pattern? Count 1-2-3-4 along with the tab. | Tempo or downbeat is wrong. Force the tempo (`--bpm N`) before touching anything else; the downbeat is derived from it. |
-| 5 | **Repeated notes** | Does the recording play the same note several times where the tab shows one long one? | The onset detector merged them. Lower the onset threshold (`--onset 0.4`). |
-| 6 | **Ghost notes** | Is there junk between the real notes — very short notes, notes an octave or a fifth above a real one? | Harmonics or separation leakage got through. Raise the threshold (`--onset 0.7`), or raise the minimum note length. |
+| 5 | **Repeated notes** | Does the recording play the same note several times where the tab shows one long one? | The onset detector merged them. Lower the onset threshold (`--onset 0.4`). If the run was `--engine crepe`, switch back to basic-pitch: a pitch tracker only splits notes on a pitch *change*, so repeats merge by design. |
+| 6 | **Ghost notes** | Is there junk between the real notes — very short notes, a repeat of the note just played, notes an octave or a fifth above a real one? | Harmonics, re-triggers or separation leakage got through. Raise the threshold (`--onset 0.7`) — then **compare note counts before and after**. On the low strings a higher threshold also merges repeated notes; in testing it removed 9 ghosts and 11 real notes. If the count falls by more than the ghosts you saw, use `--engine crepe` instead: it does not invent notes, at the price of check 5. |
+
+The two engines fail in opposite directions, so the choice is a judgement about the
+recording. Measured on a synthetic line with 96 known notes: basic-pitch found 97% of
+them and added 16 ghost re-triggers; crepe found 89%, added nothing, and got every
+pitch it reported right. Busy, doubled or re-triggering material wants crepe; lines
+built on repeated notes want basic-pitch.
 
 Checks 1, 2 and 6 are what the `youtube-bass-tab` renderer already tries to flag for you
 in its `[warn]` lines. Treat those as a head start, not as the whole job — it can only

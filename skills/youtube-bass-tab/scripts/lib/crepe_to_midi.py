@@ -32,6 +32,26 @@ def events_to_midi(events, path, program=33):
     return len(inst.notes)
 
 
+def note_loudness(wav, events, window=0.06):
+    """Per-note RMS over the first `window` seconds after onset, scaled to 0..1.
+
+    CREPE's periodicity says how pitched a frame is, not how loud, so as a
+    velocity it comes out flat and the downbeat search is left with no accent
+    to go on. Loudness from the audio itself restores that cue.
+    """
+    import numpy as np
+    import soundfile as sf
+    audio, sr = sf.read(wav, dtype="float32", always_2d=True)
+    audio = audio.mean(axis=1)
+    rms = []
+    for e in events:
+        a = int(e["start"] * sr)
+        seg = audio[a:a + int(window * sr)]
+        rms.append(float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0)
+    top = max(rms) or 1.0
+    return [r / top for r in rms]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wav")
@@ -45,6 +65,8 @@ def main():
     events = transcribe(a.wav, device=a.device, conf_threshold=a.conf)
     if not events:
         sys.exit("crepe found no notes - check the stem audio")
+    for e, loud in zip(events, note_loudness(a.wav, events)):
+        e["amp"] = loud
     print(f"[crepe] {events_to_midi(events, a.out)} notes -> {a.out}", file=sys.stderr)
 
 

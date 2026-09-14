@@ -54,6 +54,8 @@ done
 
 fail() { echo "RESULT {\"ok\":false,\"error\":\"$1\",\"log\":\"${LOG:-}\"}"; exit 1; }
 step() { echo "[basstab] $*"; }
+# the failure that just went into run.log looks like a blocked or absent network
+net_blocked() { grep -qiE "tunnel connection failed|unable to connect to proxy|urlerror|name or service not known|network is unreachable|connection refused|temporary failure in name resolution" "${LOG:-/dev/null}" 2>/dev/null; }
 [[ -n "$URL" || -n "$INPUT" ]] || { usage; fail "no input given"; }
 [[ "$ENGINE" == "basic-pitch" || "$ENGINE" == "crepe" ]] \
   || { usage; fail "unknown --engine $ENGINE (basic-pitch | crepe)"; }
@@ -87,8 +89,10 @@ if [[ -n "$INPUT" ]]; then
   fi
 elif [[ ! -f "$W/song.wav" || $FORCE -eq 1 ]]; then
   step "downloading audio"
-  "$BASSENV/bin/yt-dlp" -x --audio-format wav --no-playlist -o "$W/song.%(ext)s" "$URL" \
-    >>"$LOG" 2>&1 || fail "yt-dlp download failed (see run.log)"
+  if ! "$BASSENV/bin/yt-dlp" -x --audio-format wav --no-playlist -o "$W/song.%(ext)s" "$URL" >>"$LOG" 2>&1; then
+    net_blocked && fail "yt-dlp could not reach YouTube (network blocked or offline; see run.log)"
+    fail "yt-dlp download failed (see run.log)"
+  fi
 fi
 [[ -f "$W/song.wav" ]] || fail "song.wav missing after download"
 
@@ -98,8 +102,10 @@ if [[ $SEPARATE -eq 1 ]]; then
   BASS="$W/sep/htdemucs/song/bass.wav"; NOBASS="$W/sep/htdemucs/song/no_bass.wav"
   if [[ ! -f "$BASS" || $FORCE -eq 1 ]]; then
     step "separating bass stem (demucs${DEVICE[*]:+ ${DEVICE[*]}})"
-    "$BASSENV/bin/demucs" --two-stems=bass -n htdemucs ${DEVICE[@]+"${DEVICE[@]}"} -o "$W/sep" "$W/song.wav" \
-      >>"$LOG" 2>&1 || fail "demucs failed (see run.log; if CUDA/OOM, retry with --cpu)"
+    if ! "$BASSENV/bin/demucs" --two-stems=bass -n htdemucs ${DEVICE[@]+"${DEVICE[@]}"} -o "$W/sep" "$W/song.wav" >>"$LOG" 2>&1; then
+      net_blocked && fail "demucs could not download its model weights (dl.fbaipublicfiles.com unreachable; see run.log)"
+      fail "demucs failed (see run.log; if CUDA/OOM, retry with --cpu)"
+    fi
   fi
 else
   BASS="$W/song.wav"

@@ -28,15 +28,27 @@ say "creating venv at $VENV (Python 3.11)"
 uv venv -q -p 3.11 "$VENV"
 export VIRTUAL_ENV="$VENV"
 
-# 4. torch: NVIDIA -> CUDA 12.8 wheels; Linux without NVIDIA -> small CPU wheels; macOS -> default
-if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
+# 4. torch: NVIDIA -> CUDA 12.8 wheels; Linux without NVIDIA -> small CPU wheels; macOS -> default.
+#    TORCH_INDEX_URL overrides the choice: set it to "" for plain PyPI (works where a proxy
+#    blocks download.pytorch.org; on Linux that is the CUDA build, ~7 GB installed), or to an
+#    internal mirror.
+if [[ -n "${TORCH_INDEX_URL+x}" ]]; then
+  INDEX="$TORCH_INDEX_URL"
+  say "torch index from TORCH_INDEX_URL: ${INDEX:-PyPI}"
+elif command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
   say "NVIDIA GPU detected -> CUDA torch"
-  uv pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+  INDEX="https://download.pytorch.org/whl/cu128"
 elif [[ "$OS" == "Linux" ]]; then
   say "no NVIDIA GPU -> CPU torch (demucs takes 1-5 min per song, that is fine)"
-  uv pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+  INDEX="https://download.pytorch.org/whl/cpu"
 else
-  uv pip install -q torch torchaudio
+  INDEX=""
+fi
+IDX=(); [[ -n "$INDEX" ]] && IDX=(--index-url "$INDEX")
+if ! uv pip install -q torch torchaudio ${IDX[@]+"${IDX[@]}"}; then
+  echo "[setup] torch install failed${INDEX:+ from $INDEX}."
+  echo "        If your network blocks that host, retry with:   TORCH_INDEX_URL= bash $0"
+  exit 1
 fi
 
 # 5. transcription stack

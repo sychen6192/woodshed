@@ -16,7 +16,7 @@ skill 只需要跑 shell，所以 Hermes 用哪個模型都無所謂。
 
 - Linux / macOS / WSL；有 GPU 更快（一首約 1 分鐘），沒有也行（CPU 約 2–5 分鐘）
 - `ffmpeg`（`sudo apt install ffmpeg` 或 `brew install ffmpeg`）
-- 約 4 GB 磁碟（PyTorch + TensorFlow）；Python 3.11 會由 uv 自動下載，不用自己裝
+- 約 4 GB 磁碟（PyTorch + TensorFlow；走 PyPI 退路的話約 7 GB）；Python 3.11 會由 uv 自動下載，不用自己裝
 
 ## 安裝（約 5–10 分鐘，大多在下載）
 
@@ -45,13 +45,13 @@ Hermes 的 SKILL.md 裡寫的是絕對路徑，install.sh 會幫你蓋進去；C
 | 你說 | 它會加的參數 |
 |---|---|
 | 連續同音被合併了 | `--onset 0.4` |
-| 有雜音 / 幽靈音 | `--onset 0.7` |
+| 有雜音 / 同一個音連著出現兩次 | `--onset 0.7`，然後比對音數：它也會把低音弦上重複的音合併掉，掉的真音比幽靈音多就改用 `--engine crepe` |
 | 整段高了八度（synth bass 常見） | `--transpose -12` |
 | BPM 抓錯 / 差一倍 | `--bpm N` |
 | 小節線對不上 | 先 `--bpm N`，downbeat 是從 BPM 推的 |
 | 這首是降半音 / drop D / 五弦 | `--tuning EbAbDbGb` / `DADG` / `BEADG` |
 | 是 swing / 三連音 | `--grid 12` |
-| 混音很擠，basic-pitch 漏音 | `--engine crepe` |
+| 譜上一堆重複觸發的音 | `--engine crepe` |
 
 出譜器會自己印 `[warn]`，直接照著做就好：低於最低弦會建議調弦、重心太高會建議
 `--transpose -12`。
@@ -66,12 +66,11 @@ Hermes 的 SKILL.md 裡寫的是絕對路徑，install.sh 會幫你蓋進去；C
 | 複音 | 是 | 否（單音） |
 | velocity | 有，幽靈音過濾靠它 | 沒有，用 periodicity 代替 |
 | 低音弦 | 普通 | 較好（`pitch.py` 有升八度的處理） |
-| 何時用 | 大部分情況 | 混音擠、basic-pitch 漏音時 |
+| 實測（96 個已知音） | 找到 97%，多 16 個幽靈音 | 找到 89%，零幽靈音、零錯音，但重複的音會合併 |
+| 何時用 | 大部分情況、line 靠重複音撐 | 譜上一堆重複觸發的音時 |
 
-兩條路都吐出同一種 MIDI，下游出譜器完全共用。
-
-> `--engine crepe` 目前只驗證過接縫（crepe 形狀的 events 進出譜器結果一致），
-> torchcrepe 本身還沒在真實音檔上跑過。
+兩條路都吐出同一種 MIDI，下游出譜器完全共用。crepe 的 velocity 是從音檔每個 onset 的
+音量算的（periodicity 不含音量，拿來當 velocity 會全平，downbeat 就沒重音可看）。
 
 ## 期望值
 
@@ -85,6 +84,8 @@ Hermes 的 SKILL.md 裡寫的是絕對路徑，install.sh 會幫你蓋進去；C
 | 狀況 | 處理 |
 |---|---|
 | `venv not found` | `bash scripts/setup.sh` |
+| setup.sh 在 `download.pytorch.org` 那步失敗 | 網路擋了那台主機：`TORCH_INDEX_URL= bash scripts/setup.sh` 改走 PyPI（Linux 上是 CUDA 版，約 7 GB） |
+| `RESULT` 說 unreachable / network blocked | 不是參數問題：yt-dlp 或 demucs 權重下載出不去，看 run.log 裡是哪台主機 |
 | `ModuleNotFoundError: pkg_resources` | `VIRTUAL_ENV=~/.venvs/basstab uv pip install "setuptools<81"` |
 | pip 出現 `ImpImporter` 錯誤 | venv 不是 Python 3.11，刪掉 `~/.venvs/basstab` 重跑 setup.sh |
 | demucs 報 CUDA / OOM | 加 `--cpu`，或先關掉佔 VRAM 的程式 |

@@ -95,9 +95,12 @@ def detect_tempo(args, notes):
               file=sys.stderr)
         return bpm, source, 0.0, lock
 
-    # step whole bars back so the first note is not quantized to a negative slot
+    # step whole bars back so the first note is not quantized to a negative slot.
+    # A note within half a slot before the bar line rounds to slot 0 anyway, so
+    # it does not count - otherwise 8 ms of jitter opens with a whole empty bar.
     bar = 60.0 / bpm * args.meter
-    down += bar * math.floor((min(onsets) - down) / bar)
+    slot = 60.0 / bpm / max(1, args.grid // 4)
+    down += bar * math.floor((min(onsets) - down + 0.5 * slot) / bar)
     return bpm, source, down, lock
 
 
